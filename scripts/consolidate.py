@@ -52,6 +52,10 @@ def consolidate(results: list[FlightResult], search: dict) -> list[FlightResult]
         if threshold is not None and r.total_price_eur < threshold:
             r.alert = True
 
+    # Only return results that meet the threshold (all results if no threshold set).
+    if threshold is not None:
+        unique = [r for r in unique if r.alert]
+
     return unique
 
 
