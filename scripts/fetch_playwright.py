@@ -1,8 +1,9 @@
 """
 Fetch flight prices from Google Flights via Playwright (headless Chromium).
 
-Reuses fast-flights URL generation (Query.url()) and its parser (parse_js),
-but loads the page in a real browser so Google bot-detection doesn't block it.
+Reuses fast-flights URL generation (Query.url()) but parses the response
+with its own parser — the fast-flights parse_js() targets an older Google
+JSON structure; this file handles the current ds:1 layout directly.
 
 Install once:
     pip install playwright
@@ -10,6 +11,7 @@ Install once:
 """
 from __future__ import annotations
 import asyncio
+import json
 import logging
 from datetime import date, timedelta
 from typing import Optional
@@ -20,7 +22,6 @@ log = logging.getLogger(__name__)
 
 try:
     from fast_flights import FlightQuery, Passengers, create_filter
-    from fast_flights.parser import parse_js
     _FF_AVAILABLE = True
 except ImportError:
     _FF_AVAILABLE = False
@@ -52,51 +53,239 @@ def _sample_dates(window_from: str, window_to: str, n: int) -> list[date]:
     return [d for d in dates if d <= d1][:n]
 
 
-def _duration_str(dur) -> str:
-    if dur is None:
+def _duration_str(minutes) -> str:
+    if minutes is None:
         return "?"
-    if isinstance(dur, int):
-        return f"{dur // 60}h {dur % 60}m"
-    return str(dur)
-
-
-def _parse_price(price_val) -> Optional[float]:
-    if price_val is None:
-        return None
     try:
-        return float(str(price_val).replace(",", "").replace("€", "").strip())
+        m = int(minutes)
+        return f"{m // 60}h {m % 60}m"
     except (ValueError, TypeError):
+        return str(minutes)
+
+
+def _extract_json_data(js_text: str) -> Optional[list]:
+    """
+    Extract the data array from the ds:1 AF_initDataCallback payload.
+
+    The callback may appear in a standalone script or embedded in HTML.
+    The key names may be surrounded by escaped quotes (backslash-escaped
+    when the callback sits inside a JavaScript string literal).
+
+    Uses raw_decode to parse exactly the JSON array and nothing beyond it,
+    avoiding issues with rsplit on complex sideChannel payloads.
+    """
+    # Try both unescaped ('ds:1') and JS-string-escaped (\'ds:1\') forms.
+    for marker in [
+        "AF_initDataCallback({key: 'ds:1'",
+        r"AF_initDataCallback({key: \'ds:1\'",
+        'AF_initDataCallback({key: "ds:1"',
+    ]:
+        idx = js_text.find(marker)
+        if idx != -1:
+            break
+    else:
         return None
+
+    # Find "data:" after the marker, then the opening "[" of the array.
+    snippet = js_text[idx:]
+    data_idx = snippet.find("data:")
+    if data_idx == -1:
+        return None
+
+    array_start = snippet.find("[", data_idx)
+    if array_start == -1:
+        return None
+
+    # raw_decode parses exactly one JSON value and returns (value, end_pos).
+    try:
+        value, _ = json.JSONDecoder().raw_decode(snippet, array_start)
+        return value
+    except json.JSONDecodeError:
+        return None
+
+
+def _parse_flights(js_text: str) -> list[dict]:
+    """
+    Parse flight results from the current Google Flights ds:1 JSON structure.
+
+    Payload layout (as observed 2026-08-30):
+      payload[0]  metadata
+      payload[1]  airport info
+      payload[2]  [[outbound_flight_entry, ...], null, 0, 0, [1]]
+      payload[3]  [[[ return_flight_entry, ...]], ...]
+
+    Each flight entry:
+      entry[0]  [airline_code, [airline_names], [segments], origin,
+                 dep_date, dep_time, dest, arr_date, arr_time,
+                 elapsed_min, ...]
+      entry[1]  [[null, price_eur], "booking_token"]
+
+    Returns list of dicts with keys: price_eur, airline_codes, stops,
+    duration_min, segments.
+    """
+    payload = _extract_json_data(js_text)
+    if not isinstance(payload, list):
+        return []
+
+    # Find the outbound flights list — try outer indices 2, 3, 4 in order.
+    flight_entries: list = []
+    for outer_idx in range(2, min(6, len(payload))):
+        try:
+            outer = payload[outer_idx]
+            if not isinstance(outer, list) or not outer:
+                continue
+            # The outbound block is [[entry, entry, ...], null, 0, 0, [1]]
+            # so outer[0] is the list of flight entries.
+            candidate = outer[0]
+            if not isinstance(candidate, list) or not candidate:
+                continue
+            first = candidate[0]
+            if not isinstance(first, list) or len(first) < 2:
+                continue
+            # Validate: first[0] must be flight data (list), first[1] must be
+            # price data [[null, int], token_str].
+            if not isinstance(first[0], list) or not isinstance(first[1], list):
+                continue
+            price_block = first[1]
+            if (
+                len(price_block) >= 1
+                and isinstance(price_block[0], list)
+                and len(price_block[0]) >= 2
+                and isinstance(price_block[0][1], (int, float))
+            ):
+                flight_entries = candidate
+                log.debug("  Found flight list at payload[%d][0] (%d entries)", outer_idx, len(candidate))
+                break
+        except (IndexError, TypeError):
+            continue
+
+    results = []
+    for entry in flight_entries:
+        try:
+            flight_data = entry[0]   # itinerary array
+            price_block = entry[1]   # [[null, price], token]
+            price_eur = float(price_block[0][1])
+
+            airline_code  = flight_data[0]  # "QR"
+            airline_names = flight_data[1] if isinstance(flight_data[1], list) else []
+            segments      = flight_data[2] if isinstance(flight_data[2], list) else []
+            duration_min  = flight_data[9] if len(flight_data) > 9 else None
+            stops         = max(0, len(segments) - 1)
+
+            codes = [airline_code] if isinstance(airline_code, str) and airline_code else []
+
+            results.append({
+                "price_eur":     price_eur,
+                "airline_codes": codes,
+                "stops":         stops,
+                "duration_min":  duration_min,
+                "segments":      segments,
+            })
+        except (IndexError, TypeError, ValueError, AttributeError):
+            continue
+
+    return results
+
+
+def _is_ds1_payload(text: str) -> bool:
+    """Check whether a text blob contains a Google Flights ds:1 data payload."""
+    return bool(text) and "AF_initDataCallback" in text and "key: 'ds:1'" in text and "data:[" in text
 
 
 async def _dismiss_consent(page) -> None:
-    """Click 'Reject all' on Google's cookie consent dialog if it appears."""
+    """Dismiss Google's cookie consent dialog (tries EN + NL button labels)."""
+    for label in ["Reject all", "Alles weigeren", "Accept all", "Alles accepteren", "Agree", "Akkoord"]:
+        try:
+            btn = page.get_by_role("button", name=label, exact=True)
+            if await btn.is_visible(timeout=2000):
+                await btn.click()
+                await page.wait_for_timeout(1000)
+                return
+        except Exception:
+            continue
+
+
+async def _get_ds1_text(page, url: str, timeout_ms: int) -> Optional[str]:
+    """
+    Navigate to a Google Flights URL and return the page text containing the
+    ds:1 AF_initDataCallback payload.
+
+    The flight data is embedded in the main HTML response.  We intercept the
+    primary page response to get the full HTML (before JavaScript runs) and
+    then search it for the ds:1 callback.  This is more reliable than reading
+    DOM script elements, which may reflect post-JS state.
+    """
+    captured: list[str] = []
+
+    async def on_response(resp):
+        if captured:
+            return
+        try:
+            if resp.url != url and not resp.url.startswith(url.split("?")[0]):
+                return
+            ct = resp.headers.get("content-type", "")
+            if "html" not in ct:
+                return
+            body = await resp.text()
+            if _is_ds1_payload(body):
+                captured.append(body)
+        except Exception:
+            pass
+
+    page.on("response", on_response)
     try:
-        btn = page.get_by_role("button", name="Reject all")
-        if await btn.is_visible(timeout=4000):
-            await btn.click()
-            await page.wait_for_timeout(500)
+        await page.goto(url, wait_until="load", timeout=timeout_ms)
+        await _dismiss_consent(page)
+        # Give Google a moment after consent to fully render the page.
+        await page.wait_for_timeout(2000)
+    finally:
+        page.remove_listener("response", on_response)
+
+    if captured:
+        return captured[0]
+
+    # Fallback: the page may redirect (consent domain).  Try the final URL.
+    final_url = page.url
+    if final_url != url:
+        captured2: list[str] = []
+        async def on_response2(resp):
+            if captured2:
+                return
+            try:
+                ct = resp.headers.get("content-type", "")
+                if "html" not in ct:
+                    return
+                body = await resp.text()
+                if _is_ds1_payload(body):
+                    captured2.append(body)
+            except Exception:
+                pass
+        page.on("response", on_response2)
+        try:
+            await page.goto(url, wait_until="load", timeout=timeout_ms)
+            await page.wait_for_timeout(2000)
+        finally:
+            page.remove_listener("response", on_response2)
+        if captured2:
+            return captured2[0]
+
+    # Last resort: get the current page HTML via JavaScript.
+    try:
+        html = await page.content()
+        if _is_ds1_payload(html):
+            return html
     except Exception:
         pass
 
-
-async def _get_script_text(page, url: str, timeout_ms: int) -> Optional[str]:
-    """Navigate to a Google Flights URL and return the ds:1 script content."""
-    await page.goto(url, wait_until="domcontentloaded", timeout=timeout_ms)
-    await _dismiss_consent(page)
-    try:
-        el = await page.wait_for_selector("script.ds\\:1", timeout=timeout_ms)
-        return await el.inner_text() if el else None
-    except Exception:
-        return None
+    return None
 
 
 async def _fetch_all(search: dict, timeout_sec: int) -> list[FlightResult]:
-    cabin_key  = _CABIN_MAP.get(search["cabin"], "economy")
-    n_dates    = search.get("sample_departure_dates", 6)
-    max_res    = search.get("max_results_per_date", 3)
-    mid_days   = (search["trip_duration_days"]["min"] + search["trip_duration_days"]["max"]) // 2
-    max_stops  = search.get("max_stops", None)
+    cabin_key = _CABIN_MAP.get(search["cabin"], "economy")
+    n_dates   = search.get("sample_departure_dates", 6)
+    max_res   = search.get("max_results_per_date", 3)
+    mid_days  = (search["trip_duration_days"]["min"] + search["trip_duration_days"]["max"]) // 2
+    max_stops = search.get("max_stops", None)
 
     dep_dates = _sample_dates(
         search["outbound_window"]["from"],
@@ -138,7 +327,7 @@ async def _fetch_all(search: dict, timeout_sec: int) -> list[FlightResult]:
                     url = query.url()
 
                     try:
-                        js_text = await _get_script_text(page, url, timeout_ms)
+                        js_text = await _get_ds1_text(page, url, timeout_ms)
                     except Exception as e:
                         log.warning("  PW %s->%s %s: load error: %s", origin, dest, dep, e)
                         continue
@@ -147,25 +336,15 @@ async def _fetch_all(search: dict, timeout_sec: int) -> list[FlightResult]:
                         log.warning("  PW %s->%s %s: no data script found", origin, dest, dep)
                         continue
 
-                    try:
-                        result_list = parse_js(js_text)
-                    except Exception as e:
-                        log.warning("  PW %s->%s %s: parse error: %s", origin, dest, dep, e)
+                    flights = _parse_flights(js_text)
+                    if not flights:
+                        log.warning("  PW %s->%s %s: parser returned 0 results", origin, dest, dep)
                         continue
 
                     count = 0
-                    for gf in result_list:
+                    for gf in flights:
                         if count >= max_res:
                             break
-                        price = _parse_price(getattr(gf, "price", None))
-                        if price is None:
-                            continue
-
-                        airlines = getattr(gf, "airlines", []) or []
-                        codes    = [getattr(a, "code", str(a)) for a in airlines]
-                        flights  = getattr(gf, "flights", []) or []
-                        stops    = max(0, len(flights) - 1) if flights else 0
-                        dur_out  = _duration_str(getattr(flights[0], "duration", None)) if flights else "?"
 
                         results.append(FlightResult(
                             source="google",
@@ -175,10 +354,10 @@ async def _fetch_all(search: dict, timeout_sec: int) -> list[FlightResult]:
                             departure_date=dep.isoformat(),
                             return_date=ret.isoformat(),
                             cabin=search["cabin"],
-                            total_price_eur=price,
-                            airline_codes=codes or ["?"],
-                            stops=stops,
-                            duration_outbound=dur_out,
+                            total_price_eur=gf["price_eur"],
+                            airline_codes=gf["airline_codes"] or ["?"],
+                            stops=gf["stops"],
+                            duration_outbound=_duration_str(gf["duration_min"]),
                             duration_return=None,
                             booking_url=url,
                             raw={},
