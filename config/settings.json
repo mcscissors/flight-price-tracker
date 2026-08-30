@@ -1,0 +1,28 @@
+{
+  "_comment": "Non-secret settings. API keys and email passwords go in .env (see .env.example).",
+
+  "email": {
+    "to": "schaar000@gmail.com",
+    "from_name": "Flight Tracker",
+    "subject_prefix": "✈ Flight Deals",
+    "smtp_server": "smtp.gmail.com",
+    "smtp_port": 587,
+    "_comment_password": "Set GMAIL_APP_PASSWORD in .env — generate at myaccount.google.com/apppasswords"
+  },
+
+  "amadeus": {
+    "_comment": "Amadeus self-service portal was decommissioned 2025-07-17 — enterprise access only now. Pass --with-amadeus to enable. Leave unused otherwise.",
+    "environment": "production"
+  },
+
+  "currency": "EUR",
+
+  "run": {
+    "per_search_email": true,
+    "_comment_per_search": "true = email after each search individually; false = one combined email at the end",
+    "send_email_only_if_alerts": false,
+    "cache_results": true,
+    "results_dir": "data/results",
+    "request_timeout_sec": 60
+  }
+}
