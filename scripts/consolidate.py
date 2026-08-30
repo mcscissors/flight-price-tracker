@@ -48,6 +48,9 @@ def consolidate(results: list[FlightResult], search: dict) -> list[FlightResult]
 
     unique.sort(key=sort_key)
 
+    # Only keep flights operated by a Flying Blue partner airline.
+    unique = [r for r in unique if r.fb_partner() is not None]
+
     for r in unique:
         if threshold is not None and r.total_price_eur < threshold:
             r.alert = True
