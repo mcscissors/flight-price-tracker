@@ -189,12 +189,14 @@ def _parse_flights(js_text: str) -> list[dict]:
 
 def _is_ds1_payload(text: str) -> bool:
     """Check whether a text blob contains a Google Flights ds:1 data payload."""
-    return bool(text) and "AF_initDataCallback" in text and "key: 'ds:1'" in text and "data:[" in text
+    if not text or "AF_initDataCallback" not in text or "data:" not in text:
+        return False
+    return any(m in text for m in ("key: 'ds:1'", r"key: \'ds:1\'", 'key: "ds:1"'))
 
 
 async def _dismiss_consent(page) -> None:
     """Dismiss Google's cookie consent dialog (tries EN + NL button labels)."""
-    for label in ["Reject all", "Alles weigeren", "Accept all", "Alles accepteren", "Agree", "Akkoord"]:
+    for label in ["Reject all", "Alles weigeren"]:
         try:
             btn = page.get_by_role("button", name=label, exact=True)
             if await btn.is_visible(timeout=2000):
@@ -252,6 +254,8 @@ async def _get_ds1_text(page, url: str, timeout_ms: int) -> Optional[str]:
             if captured2:
                 return
             try:
+                if resp.url != final_url and not resp.url.startswith(final_url.split("?")[0]):
+                    return
                 ct = resp.headers.get("content-type", "")
                 if "html" not in ct:
                     return
@@ -262,7 +266,7 @@ async def _get_ds1_text(page, url: str, timeout_ms: int) -> Optional[str]:
                 pass
         page.on("response", on_response2)
         try:
-            await page.goto(url, wait_until="load", timeout=timeout_ms)
+            await page.goto(final_url, wait_until="load", timeout=timeout_ms)
             await page.wait_for_timeout(2000)
         finally:
             page.remove_listener("response", on_response2)

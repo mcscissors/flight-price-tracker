@@ -126,6 +126,10 @@ def main(args=None) -> None:
                 log.info("  No alerts — email skipped")
                 continue
 
+            if n_results == 0:
+                log.info("  No results after filtering — email skipped")
+                continue
+
             subject, html = prepare_email.build(consolidated, [search])
             log.info(f"  Subject: {subject}")
 

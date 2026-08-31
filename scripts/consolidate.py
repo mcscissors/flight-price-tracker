@@ -30,7 +30,7 @@ def consolidate(results: list[FlightResult], search: dict) -> list[FlightResult]
     # Sort by price, with a 5% price band where miles generosity breaks the tie.
     # Within the band: preferred airlines first, then highest FB miles score.
     if unique:
-        cheapest = unique[0].total_price_eur
+        cheapest = min(r.total_price_eur for r in unique)
         band = cheapest * 1.05
 
         def sort_key(r: FlightResult):
