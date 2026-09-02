@@ -196,10 +196,14 @@ def _is_ds1_payload(text: str) -> bool:
 
 async def _dismiss_consent(page) -> None:
     """Dismiss Google's cookie consent dialog (tries EN + NL button labels)."""
-    for label in ["Reject all", "Alles weigeren"]:
+    # Prefer reject; fall back to accept so the session is not permanently blocked.
+    for label in ["Reject all", "Alles weigeren", "Alles afwijzen",
+                  "Accept all", "Alles accepteren", "Agree", "Akkoord"]:
         try:
             btn = page.get_by_role("button", name=label, exact=True)
             if await btn.is_visible(timeout=2000):
+                if label in ("Accept all", "Alles accepteren", "Agree", "Akkoord"):
+                    log.debug("  No reject button found — clicking '%s' to unblock session", label)
                 await btn.click()
                 await page.wait_for_timeout(1000)
                 return
@@ -334,6 +338,12 @@ async def _fetch_all(search: dict, timeout_sec: int) -> list[FlightResult]:
                         js_text = await _get_ds1_text(page, url, timeout_ms)
                     except Exception as e:
                         log.warning("  PW %s->%s %s: load error: %s", origin, dest, dep, e)
+                        # Reset page state so a stale redirect (e.g. consent.google.com
+                        # queued mid-navigation) cannot interrupt the next goto().
+                        try:
+                            await page.goto("about:blank", wait_until="load", timeout=5000)
+                        except Exception:
+                            pass
                         continue
 
                     if not js_text:
