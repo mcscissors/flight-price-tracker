@@ -167,4 +167,8 @@ def main(args=None) -> None:
 
 
 if __name__ == "__main__":
-    main()
+    try:
+        main()
+    except Exception as e:
+        log.exception("Unhandled error in main: %s", e)
+        sys.exit(0)  # Always exit 0 so the scheduled task doesn't block future runs.

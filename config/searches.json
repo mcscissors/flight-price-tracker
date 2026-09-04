@@ -32,8 +32,8 @@
         "to": "2027-01-05"
       },
       "trip_duration_days": {
-        "min": 10,
-        "max": 20
+        "min": 12,
+        "max": 22
       },
       "preferred_airlines": [
         "EY",
@@ -90,8 +90,8 @@
         "to": "2027-01-05"
       },
       "trip_duration_days": {
-        "min": 10,
-        "max": 20
+        "min": 12,
+        "max": 22
       },
       "preferred_airlines": [
         "DL",
@@ -138,8 +138,8 @@
         "to": "2027-01-05"
       },
       "trip_duration_days": {
-        "min": 10,
-        "max": 20
+        "min": 12,
+        "max": 22
       },
       "preferred_airlines": [
         "DL",
@@ -194,8 +194,8 @@
         "to": "2027-01-05"
       },
       "trip_duration_days": {
-        "min": 10,
-        "max": 20
+        "min": 12,
+        "max": 22
       },
       "preferred_airlines": [
         "DL",
@@ -232,8 +232,8 @@
         "to": "2027-01-05"
       },
       "trip_duration_days": {
-        "min": 10,
-        "max": 20
+        "min": 12,
+        "max": 22
       },
       "preferred_airlines": [
         "AM",
@@ -269,8 +269,8 @@
         "to": "2027-01-05"
       },
       "trip_duration_days": {
-        "min": 10,
-        "max": 20
+        "min": 12,
+        "max": 22
       },
       "preferred_airlines": [
         "AM",
