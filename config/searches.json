@@ -1,12 +1,14 @@
 {
-  "_comment": "Flight price tracker searches. preferred_airlines: IATA codes in priority order — within a 5% price band the tracker promotes higher Flying Blue miles earners. All searches: Business class, 10–20 nights, AMS origin, alert ≤ €2,400.",
+  "_comment": "Flight price tracker searches. preferred_airlines: IATA codes in priority order — within a 5% price band the tracker promotes higher Flying Blue miles earners. Origins: AMS/DUS/BRU. Business alert ≤ €2,250, Premium Economy alert ≤ €1,000.",
   "searches": [
     {
-      "name": "AMS → Southeast Asia Business",
+      "name": "AMS/DUS/BRU → Southeast Asia Business",
       "_comment": "Best FB earners: EY 400% (no XP), WY 275% (no XP), SV 250%+XP, VN 200%+XP, GA 175%+XP, MH 175%.",
       "enabled": true,
       "origins": [
-        "AMS"
+        "AMS",
+        "DUS",
+        "BRU"
       ],
       "destinations": [
         "DPS",
@@ -45,7 +47,8 @@
         "CI",
         "MU",
         "KE",
-        "KL"
+        "KL",
+	"AF"
       ],
       "max_stops": 1,
       "alert_below_eur": 2250,
@@ -53,11 +56,13 @@
       "sample_departure_dates": 7
     },
     {
-      "name": "AMS → Caribbean & Central America Business",
+      "name": "AMS/DUS/BRU → Caribbean & Central America Business",
       "_comment": "Best FB: DL 300%+XP (via ATL), CM 150%+XP (via PTY), AM 150%+XP (via MEX), KL afwijkend (direct to AUA/CUR/SXM/BON).",
       "enabled": true,
       "origins": [
-        "AMS"
+        "AMS",
+        "DUS",
+        "BRU"
       ],
       "destinations": [
         "AUA",
@@ -65,7 +70,6 @@
         "BON",
         "SXM",
         "MBJ",
-        "NAS",
         "BGI",
         "ANU",
         "UVF",
@@ -73,9 +77,7 @@
         "PUJ",
         "SDQ",
         "PTP",
-        "FDF",
         "SJO",
-        "LIR",
         "PTY",
         "GUA",
         "BZE"
@@ -107,11 +109,13 @@
       "sample_departure_dates": 7
     },
     {
-      "name": "AMS → South America + Indian Ocean Business",
+      "name": "AMS/DUS/BRU → South America + Indian Ocean Business",
       "_comment": "Best FB: DL 300%+XP (SA via ATL), MK 150% (MRU), KQ 175%+XP (SEZ/TNR via NBO), AM 150%+XP (SA via MEX), AR 125%+XP (Buenos Aires).",
       "enabled": true,
       "origins": [
-        "AMS"
+        "AMS",
+        "DUS",
+        "BRU"
       ],
       "destinations": [
         "GRU",
@@ -157,11 +161,13 @@
       "sample_departure_dates": 7
     },
     {
-      "name": "AMS → Caribbean & Central America Premium Economy",
-      "_comment": "Same destinations as Business search. Alert ≤ €1,000. KL earns per € (afwijkend), DL/CM/AM strong for XP.",
+      "name": "AMS/DUS/BRU → Americas Premium Economy",
+      "_comment": "Full Caribbean + Central America + South America + Cuba in premium economy. Alert ≤ €1,000 (exceptional bargains only — typical market is €1,600–2,900). KL/DL/CM/AM/AF main FB partners. 2 stops needed for SA and Cuba.",
       "enabled": true,
       "origins": [
-        "AMS"
+        "AMS",
+        "DUS",
+        "BRU"
       ],
       "destinations": [
         "AUA",
@@ -182,7 +188,17 @@
         "LIR",
         "PTY",
         "GUA",
-        "BZE"
+        "BZE",
+        "HAV",
+        "GRU",
+        "EZE",
+        "MVD",
+        "BOG",
+        "MDE",
+        "CTG",
+        "LIM",
+        "UIO",
+        "SCL"
       ],
       "cabin": "PREMIUM_ECONOMY",
       "outbound_window": {
@@ -203,61 +219,27 @@
         "AM",
         "KL",
         "AF",
-        "VS"
-      ],
-      "max_stops": 1,
-      "alert_below_eur": 1000,
-      "max_results_per_date": 3,
-      "sample_departure_dates": 7
-    },
-    {
-      "name": "AMS → Cuba Premium Economy",
-      "_comment": "HAV/VRA/HOG in premium economy. AM via MEX, CM via PTY, AF via CDG, KL. 2 stops typically needed.",
-      "enabled": true,
-      "origins": [
-        "AMS"
-      ],
-      "destinations": [
-        "HAV",
-        "VRA",
-        "HOG"
-      ],
-      "cabin": "PREMIUM_ECONOMY",
-      "outbound_window": {
-        "from": "2026-09-15",
-        "to": "2026-12-15"
-      },
-      "inbound_window": {
-        "from": "2026-09-25",
-        "to": "2027-01-05"
-      },
-      "trip_duration_days": {
-        "min": 12,
-        "max": 22
-      },
-      "preferred_airlines": [
-        "AM",
-        "CM",
-        "AF",
-        "KL",
-        "DL"
+        "VS",
+        "MK",
+        "KQ",
+        "AR"
       ],
       "max_stops": 2,
       "alert_below_eur": 1000,
-      "max_results_per_date": 5,
+      "max_results_per_date": 10,
       "sample_departure_dates": 7
     },
     {
-      "name": "AMS → Cuba Business",
+      "name": "AMS/DUS/BRU → Cuba Business",
       "_comment": "HAV (Havana), VRA (Varadero beach resort), HOG (Holguín / north coast). Main FB partners: AM 150%+XP via MEX, CM 150% via PTY, AF afwijkend via CDG. 2 stops needed for most routings.",
       "enabled": true,
       "origins": [
-        "AMS"
+        "AMS",
+        "DUS",
+        "BRU"
       ],
       "destinations": [
-        "HAV",
-        "VRA",
-        "HOG"
+        "HAV"
       ],
       "cabin": "BUSINESS",
       "outbound_window": {
@@ -281,7 +263,7 @@
       ],
       "max_stops": 2,
       "alert_below_eur": 2250,
-      "max_results_per_date": 5,
+      "max_results_per_date": 10,
       "sample_departure_dates": 7
     }
   ]
