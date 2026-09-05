@@ -288,6 +288,96 @@ async def _get_ds1_text(page, url: str, timeout_ms: int) -> Optional[str]:
     return None
 
 
+async def _fetch_origin(
+    pw,
+    search: dict,
+    origin: str,
+    dep_dates: list,
+    in_from,
+    in_to,
+    cabin_key: str,
+    mid_days: int,
+    max_res: int,
+    max_stops,
+    timeout_ms: int,
+) -> list[FlightResult]:
+    """Fetch all destinations/dates for one origin. Uses its own browser instance."""
+    browser = await pw.chromium.launch(headless=True)
+    ctx = await browser.new_context(
+        locale="en-US",
+        extra_http_headers={"Accept-Language": "en-US,en;q=0.9"},
+    )
+    page = await ctx.new_page()
+    results: list[FlightResult] = []
+
+    for dest in search["destinations"]:
+        for dep in dep_dates:
+            ret = dep + timedelta(days=mid_days)
+            if in_from and in_to and not (in_from <= ret <= in_to):
+                continue
+
+            query = create_filter(
+                flights=[
+                    FlightQuery(date=dep.isoformat(), from_airport=origin, to_airport=dest),
+                    FlightQuery(date=ret.isoformat(), from_airport=dest,   to_airport=origin),
+                ],
+                trip="round-trip",
+                seat=cabin_key,
+                passengers=Passengers(adults=1),
+                currency="EUR",
+                max_stops=max_stops,
+            )
+            url = query.url()
+
+            try:
+                js_text = await _get_ds1_text(page, url, timeout_ms)
+            except Exception as e:
+                log.warning("  PW %s->%s %s: load error: %s", origin, dest, dep, e)
+                # Reset page state so a stale redirect (e.g. consent.google.com
+                # queued mid-navigation) cannot interrupt the next goto().
+                try:
+                    await page.goto("about:blank", wait_until="load", timeout=5000)
+                except Exception:
+                    pass
+                continue
+
+            if not js_text:
+                log.warning("  PW %s->%s %s: no data script found", origin, dest, dep)
+                continue
+
+            flights = _parse_flights(js_text)
+            if not flights:
+                log.warning("  PW %s->%s %s: parser returned 0 results", origin, dest, dep)
+                continue
+
+            count = 0
+            for gf in flights:
+                if count >= max_res:
+                    break
+                results.append(FlightResult(
+                    source="google",
+                    search_name=search["name"],
+                    origin=origin,
+                    destination=dest,
+                    departure_date=dep.isoformat(),
+                    return_date=ret.isoformat(),
+                    cabin=search["cabin"],
+                    total_price_eur=gf["price_eur"],
+                    airline_codes=gf["airline_codes"] or ["?"],
+                    stops=gf["stops"],
+                    duration_outbound=_duration_str(gf["duration_min"]),
+                    duration_return=None,
+                    booking_url=url,
+                    raw={},
+                ))
+                count += 1
+
+            log.info("  PW %s->%s %s: %d offers", origin, dest, dep, count)
+
+    await browser.close()
+    return results
+
+
 async def _fetch_all(search: dict, timeout_sec: int) -> list[FlightResult]:
     cabin_key = _CABIN_MAP.get(search["cabin"], "economy")
     n_dates   = search.get("sample_departure_dates", 6)
@@ -303,86 +393,21 @@ async def _fetch_all(search: dict, timeout_sec: int) -> list[FlightResult]:
     in_from = date.fromisoformat(search["inbound_window"]["from"]) if "inbound_window" in search else None
     in_to   = date.fromisoformat(search["inbound_window"]["to"])   if "inbound_window" in search else None
 
-    results: list[FlightResult] = []
     timeout_ms = timeout_sec * 1000
+    # Max 2 origins in parallel — keeps Google from rate-limiting the IP.
+    sem = asyncio.Semaphore(2)
+
+    async def bounded(origin: str) -> list[FlightResult]:
+        async with sem:
+            return await _fetch_origin(
+                pw, search, origin, dep_dates, in_from, in_to,
+                cabin_key, mid_days, max_res, max_stops, timeout_ms,
+            )
 
     async with async_playwright() as pw:
-        browser = await pw.chromium.launch(headless=True)
-        ctx = await browser.new_context(
-            locale="en-US",
-            extra_http_headers={"Accept-Language": "en-US,en;q=0.9"},
-        )
-        page = await ctx.new_page()
+        batches = await asyncio.gather(*[bounded(o) for o in search["origins"]])
 
-        for origin in search["origins"]:
-            for dest in search["destinations"]:
-                for dep in dep_dates:
-                    ret = dep + timedelta(days=mid_days)
-                    if in_from and in_to and not (in_from <= ret <= in_to):
-                        continue
-
-                    query = create_filter(
-                        flights=[
-                            FlightQuery(date=dep.isoformat(), from_airport=origin, to_airport=dest),
-                            FlightQuery(date=ret.isoformat(), from_airport=dest,   to_airport=origin),
-                        ],
-                        trip="round-trip",
-                        seat=cabin_key,
-                        passengers=Passengers(adults=1),
-                        currency="EUR",
-                        max_stops=max_stops,
-                    )
-                    url = query.url()
-
-                    try:
-                        js_text = await _get_ds1_text(page, url, timeout_ms)
-                    except Exception as e:
-                        log.warning("  PW %s->%s %s: load error: %s", origin, dest, dep, e)
-                        # Reset page state so a stale redirect (e.g. consent.google.com
-                        # queued mid-navigation) cannot interrupt the next goto().
-                        try:
-                            await page.goto("about:blank", wait_until="load", timeout=5000)
-                        except Exception:
-                            pass
-                        continue
-
-                    if not js_text:
-                        log.warning("  PW %s->%s %s: no data script found", origin, dest, dep)
-                        continue
-
-                    flights = _parse_flights(js_text)
-                    if not flights:
-                        log.warning("  PW %s->%s %s: parser returned 0 results", origin, dest, dep)
-                        continue
-
-                    count = 0
-                    for gf in flights:
-                        if count >= max_res:
-                            break
-
-                        results.append(FlightResult(
-                            source="google",
-                            search_name=search["name"],
-                            origin=origin,
-                            destination=dest,
-                            departure_date=dep.isoformat(),
-                            return_date=ret.isoformat(),
-                            cabin=search["cabin"],
-                            total_price_eur=gf["price_eur"],
-                            airline_codes=gf["airline_codes"] or ["?"],
-                            stops=gf["stops"],
-                            duration_outbound=_duration_str(gf["duration_min"]),
-                            duration_return=None,
-                            booking_url=url,
-                            raw={},
-                        ))
-                        count += 1
-
-                    log.info("  PW %s->%s %s: %d offers", origin, dest, dep, count)
-
-        await browser.close()
-
-    return results
+    return [r for batch in batches for r in batch]
 
 
 def fetch(search: dict, timeout_sec: int = 60) -> list[FlightResult]:
