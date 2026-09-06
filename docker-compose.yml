@@ -1,0 +1,12 @@
+services:
+  flight-tracker:
+    build: .
+    container_name: flight-tracker
+    restart: unless-stopped
+    environment:
+      - GMAIL_APP_PASSWORD=${GMAIL_APP_PASSWORD}
+    volumes:
+      # Persist logs and results outside the container
+      - ./data:/app/data
+      # Mount config so you can edit searches without rebuilding
+      - ./config:/app/config
