@@ -22,6 +22,13 @@ from . import fetch_amadeus, fetch_playwright, consolidate as consolidate_mod, p
 BASE = Path(__file__).resolve().parent.parent
 load_dotenv(BASE / ".env")
 
+# In Docker, ./data is normally bind-mounted over /app/data at container
+# start, which hides the build-time `mkdir -p data/logs` from the Dockerfile.
+# Recreate it here too so the FileHandler below never fails on a fresh mount
+# (docker-entrypoint.sh also does this on every container start, redundantly
+# but cheaply — this makes the script correct standalone too).
+(BASE / "data" / "logs").mkdir(parents=True, exist_ok=True)
+
 _log_fmt = logging.Formatter("%(asctime)s %(levelname)-7s %(message)s", datefmt="%H:%M:%S")
 _con = logging.StreamHandler(sys.stdout)
 _con.stream.reconfigure(encoding="utf-8", errors="replace")
@@ -105,9 +112,15 @@ def main(args=None) -> None:
         raw_this: list[FlightResult] = []
 
         if not opts.no_google:
-            g_results = fetch_playwright.fetch(search, timeout_sec=timeout_sec)
-            log.info(f"  Google:  {len(g_results)} raw results")
-            raw_this.extend(g_results)
+            try:
+                g_results = fetch_playwright.fetch(search, timeout_sec=timeout_sec)
+                log.info(f"  Google:  {len(g_results)} raw results")
+                raw_this.extend(g_results)
+            except Exception:
+                # A catastrophic Playwright failure (e.g. browser install
+                # broken) must not abort the whole run — skip this search's
+                # Google results and let the remaining searches still run.
+                log.exception(f"  Google fetch failed for '{name}' — skipping this source for this search")
 
         if amadeus_client:
             a_results = fetch_amadeus.fetch(search, amadeus_client)
@@ -170,5 +183,11 @@ if __name__ == "__main__":
     try:
         main()
     except Exception as e:
+        # This used to exit(0) to work around Windows Task Scheduler's
+        # StartWhenAvailable refusing to retrigger after a non-zero exit
+        # (ERROR_PROCESS_ABORTED). That's no longer how this runs — it's
+        # cron inside Docker now, which fires on schedule regardless of the
+        # previous exit code. Exiting 0 here just hides every crash from
+        # cron's failure email and any exit-code monitoring, silently.
         log.exception("Unhandled error in main: %s", e)
-        sys.exit(0)  # Always exit 0 so the scheduled task doesn't block future runs.
+        sys.exit(1)

@@ -13,6 +13,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+from dataclasses import dataclass
 from datetime import date, timedelta
 from typing import Optional
 
@@ -196,14 +197,32 @@ def _is_ds1_payload(text: str) -> bool:
 
 async def _dismiss_consent(page) -> None:
     """Dismiss Google's cookie consent dialog (tries EN + NL button labels)."""
-    # Prefer reject; fall back to accept so the session is not permanently blocked.
-    for label in ["Reject all", "Alles weigeren", "Alles afwijzen",
-                  "Accept all", "Alles accepteren", "Agree", "Akkoord"]:
+    # Prefer reject. Once a reject button is found, we commit to it — even if
+    # the click itself fails (e.g. the button detaches mid-transition), we do
+    # NOT fall through to the accept labels below. Falling through there would
+    # silently turn a failed rejection into an accepted one.
+    for label in ["Reject all", "Alles weigeren", "Alles afwijzen"]:
+        btn = page.get_by_role("button", name=label, exact=True)
+        try:
+            visible = await btn.is_visible(timeout=2000)
+        except Exception:
+            continue
+        if not visible:
+            continue
+        try:
+            await btn.click()
+            await page.wait_for_timeout(1000)
+        except Exception as e:
+            log.warning("  Reject button '%s' was visible but click failed: %s", label, e)
+        return
+
+    # No reject button found at all — fall back to accept so the session is
+    # not permanently blocked.
+    for label in ["Accept all", "Alles accepteren", "Agree", "Akkoord"]:
         try:
             btn = page.get_by_role("button", name=label, exact=True)
             if await btn.is_visible(timeout=2000):
-                if label in ("Accept all", "Alles accepteren", "Agree", "Akkoord"):
-                    log.debug("  No reject button found — clicking '%s' to unblock session", label)
+                log.debug("  No reject button found — clicking '%s' to unblock session", label)
                 await btn.click()
                 await page.wait_for_timeout(1000)
                 return
@@ -211,15 +230,14 @@ async def _dismiss_consent(page) -> None:
             continue
 
 
-async def _get_ds1_text(page, url: str, timeout_ms: int) -> Optional[str]:
+async def _capture_ds1_response(page, url: str, timeout_ms: int) -> Optional[str]:
     """
-    Navigate to a Google Flights URL and return the page text containing the
-    ds:1 AF_initDataCallback payload.
+    Navigate to `url` and capture the HTML response body containing the ds:1
+    AF_initDataCallback payload, dismissing the consent dialog if it appears.
 
-    The flight data is embedded in the main HTML response.  We intercept the
-    primary page response to get the full HTML (before JavaScript runs) and
-    then search it for the ds:1 callback.  This is more reliable than reading
-    DOM script elements, which may reflect post-JS state.
+    Shared by the primary navigation and the post-redirect retry in
+    _get_ds1_text so both paths dismiss consent identically and can't drift
+    apart.
     """
     captured: list[str] = []
 
@@ -247,35 +265,31 @@ async def _get_ds1_text(page, url: str, timeout_ms: int) -> Optional[str]:
     finally:
         page.remove_listener("response", on_response)
 
-    if captured:
-        return captured[0]
+    return captured[0] if captured else None
 
-    # Fallback: the page may redirect (consent domain).  Try the final URL.
+
+async def _get_ds1_text(page, url: str, timeout_ms: int) -> Optional[str]:
+    """
+    Navigate to a Google Flights URL and return the page text containing the
+    ds:1 AF_initDataCallback payload.
+
+    The flight data is embedded in the main HTML response.  We intercept the
+    primary page response to get the full HTML (before JavaScript runs) and
+    then search it for the ds:1 callback.  This is more reliable than reading
+    DOM script elements, which may reflect post-JS state.
+    """
+    text = await _capture_ds1_response(page, url, timeout_ms)
+    if text:
+        return text
+
+    # Fallback: the page may have redirected (e.g. to the consent domain).
+    # Retry against the final URL through the same capture path, so consent
+    # gets dismissed there too instead of leaving the page stuck on it.
     final_url = page.url
     if final_url != url:
-        captured2: list[str] = []
-        async def on_response2(resp):
-            if captured2:
-                return
-            try:
-                if resp.url != final_url and not resp.url.startswith(final_url.split("?")[0]):
-                    return
-                ct = resp.headers.get("content-type", "")
-                if "html" not in ct:
-                    return
-                body = await resp.text()
-                if _is_ds1_payload(body):
-                    captured2.append(body)
-            except Exception:
-                pass
-        page.on("response", on_response2)
-        try:
-            await page.goto(final_url, wait_until="load", timeout=timeout_ms)
-            await page.wait_for_timeout(2000)
-        finally:
-            page.remove_listener("response", on_response2)
-        if captured2:
-            return captured2[0]
+        text = await _capture_ds1_response(page, final_url, timeout_ms)
+        if text:
+            return text
 
     # Last resort: get the current page HTML via JavaScript.
     try:
@@ -288,126 +302,178 @@ async def _get_ds1_text(page, url: str, timeout_ms: int) -> Optional[str]:
     return None
 
 
-async def _fetch_origin(
-    pw,
-    search: dict,
-    origin: str,
-    dep_dates: list,
-    in_from,
-    in_to,
-    cabin_key: str,
-    mid_days: int,
-    max_res: int,
-    max_stops,
-    timeout_ms: int,
-) -> list[FlightResult]:
-    """Fetch all destinations/dates for one origin. Uses its own browser instance."""
-    browser = await pw.chromium.launch(headless=True)
-    ctx = await browser.new_context(
-        locale="en-US",
-        extra_http_headers={"Accept-Language": "en-US,en;q=0.9"},
+@dataclass(frozen=True)
+class _FetchParams:
+    """Bundles the values _fetch_all derives from `search`, shared by every
+    (origin, destination, date) combination fetched for that search."""
+    dep_dates: list
+    in_from: Optional[date]
+    in_to: Optional[date]
+    cabin_key: str
+    mid_days: int
+    max_res: int
+    max_stops: Optional[int]
+    timeout_ms: int
+
+
+def _build_fetch_params(search: dict, timeout_sec: int) -> _FetchParams:
+    n_dates = search.get("sample_departure_dates", 6)
+    inbound = search.get("inbound_window")
+    return _FetchParams(
+        dep_dates=_sample_dates(
+            search["outbound_window"]["from"],
+            search["outbound_window"]["to"],
+            n_dates,
+        ),
+        in_from=date.fromisoformat(inbound["from"]) if inbound else None,
+        in_to=date.fromisoformat(inbound["to"]) if inbound else None,
+        cabin_key=_CABIN_MAP.get(search["cabin"], "economy"),
+        mid_days=(search["trip_duration_days"]["min"] + search["trip_duration_days"]["max"]) // 2,
+        max_res=search.get("max_results_per_date", 3),
+        max_stops=search.get("max_stops", None),
+        timeout_ms=timeout_sec * 1000,
     )
-    page = await ctx.new_page()
-    results: list[FlightResult] = []
 
-    for dest in search["destinations"]:
-        for dep in dep_dates:
-            ret = dep + timedelta(days=mid_days)
-            if in_from and in_to and not (in_from <= ret <= in_to):
-                continue
 
-            query = create_filter(
-                flights=[
-                    FlightQuery(date=dep.isoformat(), from_airport=origin, to_airport=dest),
-                    FlightQuery(date=ret.isoformat(), from_airport=dest,   to_airport=origin),
-                ],
-                trip="round-trip",
-                seat=cabin_key,
-                passengers=Passengers(adults=1),
-                currency="EUR",
-                max_stops=max_stops,
+async def _fetch_destination_date(
+    page, search: dict, origin: str, dest: str, dep: date, ret: date,
+    params: _FetchParams,
+) -> list[FlightResult]:
+    """
+    Fetch one (destination, departure date) pair. Never lets an exception
+    escape — logs and returns [] on any failure, so one bad pair (a config
+    error, a parser mismatch, a malformed result) can't take down the whole
+    origin or leak the browser it belongs to.
+    """
+    try:
+        query = create_filter(
+            flights=[
+                FlightQuery(date=dep.isoformat(), from_airport=origin, to_airport=dest),
+                FlightQuery(date=ret.isoformat(), from_airport=dest,   to_airport=origin),
+            ],
+            trip="round-trip",
+            seat=params.cabin_key,
+            passengers=Passengers(adults=1),
+            currency="EUR",
+            max_stops=params.max_stops,
+        )
+        url = query.url()
+    except Exception as e:
+        log.warning("  PW %s->%s %s: filter/URL build error: %s", origin, dest, dep, e)
+        return []
+
+    try:
+        js_text = await _get_ds1_text(page, url, params.timeout_ms)
+    except Exception as e:
+        log.warning("  PW %s->%s %s: load error: %s", origin, dest, dep, e)
+        js_text = None
+    finally:
+        # Always reset page state so a stale redirect (e.g. consent.google.com
+        # queued mid-navigation) cannot interrupt the next goto() — this
+        # matters whether or not this attempt succeeded, not just on error.
+        try:
+            await page.goto("about:blank", wait_until="load", timeout=5000)
+        except Exception:
+            pass
+
+    if not js_text:
+        log.warning("  PW %s->%s %s: no data script found", origin, dest, dep)
+        return []
+
+    flights = _parse_flights(js_text)
+    if not flights:
+        log.warning("  PW %s->%s %s: parser returned 0 results", origin, dest, dep)
+        return []
+
+    try:
+        offers = [
+            FlightResult(
+                source="google",
+                search_name=search["name"],
+                origin=origin,
+                destination=dest,
+                departure_date=dep.isoformat(),
+                return_date=ret.isoformat(),
+                cabin=search["cabin"],
+                total_price_eur=gf["price_eur"],
+                airline_codes=gf["airline_codes"] or ["?"],
+                stops=gf["stops"],
+                duration_outbound=_duration_str(gf["duration_min"]),
+                duration_return=None,
+                booking_url=url,
+                raw={},
             )
-            url = query.url()
+            for gf in flights[:params.max_res]
+        ]
+    except Exception as e:
+        log.warning("  PW %s->%s %s: result build error: %s", origin, dest, dep, e)
+        return []
 
-            try:
-                js_text = await _get_ds1_text(page, url, timeout_ms)
-            except Exception as e:
-                log.warning("  PW %s->%s %s: load error: %s", origin, dest, dep, e)
-                # Reset page state so a stale redirect (e.g. consent.google.com
-                # queued mid-navigation) cannot interrupt the next goto().
-                try:
-                    await page.goto("about:blank", wait_until="load", timeout=5000)
-                except Exception:
-                    pass
-                continue
+    log.info("  PW %s->%s %s: %d offers", origin, dest, dep, len(offers))
+    return offers
 
-            if not js_text:
-                log.warning("  PW %s->%s %s: no data script found", origin, dest, dep)
-                continue
 
-            flights = _parse_flights(js_text)
-            if not flights:
-                log.warning("  PW %s->%s %s: parser returned 0 results", origin, dest, dep)
-                continue
+async def _fetch_origin(pw, search: dict, origin: str, params: _FetchParams) -> list[FlightResult]:
+    """
+    Fetch all destinations/dates for one origin. Uses its own browser
+    instance, guaranteed closed (via try/finally) whether this returns
+    normally, raises, or is cancelled by a sibling task's failure.
+    """
+    browser = await pw.chromium.launch(headless=True)
+    try:
+        ctx = await browser.new_context(
+            locale="en-US",
+            extra_http_headers={"Accept-Language": "en-US,en;q=0.9"},
+        )
+        try:
+            page = await ctx.new_page()
+            results: list[FlightResult] = []
 
-            count = 0
-            for gf in flights:
-                if count >= max_res:
-                    break
-                results.append(FlightResult(
-                    source="google",
-                    search_name=search["name"],
-                    origin=origin,
-                    destination=dest,
-                    departure_date=dep.isoformat(),
-                    return_date=ret.isoformat(),
-                    cabin=search["cabin"],
-                    total_price_eur=gf["price_eur"],
-                    airline_codes=gf["airline_codes"] or ["?"],
-                    stops=gf["stops"],
-                    duration_outbound=_duration_str(gf["duration_min"]),
-                    duration_return=None,
-                    booking_url=url,
-                    raw={},
-                ))
-                count += 1
+            for dest in search["destinations"]:
+                for dep in params.dep_dates:
+                    ret = dep + timedelta(days=params.mid_days)
+                    if params.in_from and params.in_to and not (params.in_from <= ret <= params.in_to):
+                        continue
+                    results.extend(
+                        await _fetch_destination_date(page, search, origin, dest, dep, ret, params)
+                    )
 
-            log.info("  PW %s->%s %s: %d offers", origin, dest, dep, count)
-
-    await browser.close()
-    return results
+            return results
+        finally:
+            await ctx.close()
+    finally:
+        await browser.close()
 
 
 async def _fetch_all(search: dict, timeout_sec: int) -> list[FlightResult]:
-    cabin_key = _CABIN_MAP.get(search["cabin"], "economy")
-    n_dates   = search.get("sample_departure_dates", 6)
-    max_res   = search.get("max_results_per_date", 3)
-    mid_days  = (search["trip_duration_days"]["min"] + search["trip_duration_days"]["max"]) // 2
-    max_stops = search.get("max_stops", None)
+    params = _build_fetch_params(search, timeout_sec)
 
-    dep_dates = _sample_dates(
-        search["outbound_window"]["from"],
-        search["outbound_window"]["to"],
-        n_dates,
-    )
-    in_from = date.fromisoformat(search["inbound_window"]["from"]) if "inbound_window" in search else None
-    in_to   = date.fromisoformat(search["inbound_window"]["to"])   if "inbound_window" in search else None
-
-    timeout_ms = timeout_sec * 1000
     # Max 2 origins in parallel — keeps Google from rate-limiting the IP.
     sem = asyncio.Semaphore(2)
 
-    async def bounded(origin: str) -> list[FlightResult]:
-        async with sem:
-            return await _fetch_origin(
-                pw, search, origin, dep_dates, in_from, in_to,
-                cabin_key, mid_days, max_res, max_stops, timeout_ms,
-            )
-
     async with async_playwright() as pw:
-        batches = await asyncio.gather(*[bounded(o) for o in search["origins"]])
+        # Defined inside the `async with` block (not before it) so `pw` is a
+        # real bound name at both definition and call time — no forward
+        # reference to rely on gather() happening to run inside this block.
+        async def bounded(origin: str) -> list[FlightResult]:
+            async with sem:
+                return await _fetch_origin(pw, search, origin, params)
 
-    return [r for batch in batches for r in batch]
+        # return_exceptions=True: one origin failing outright (e.g. browser
+        # launch error) must not cancel the other origins' in-flight fetches
+        # and discard their already-gathered results.
+        batches = await asyncio.gather(
+            *[bounded(o) for o in search["origins"]],
+            return_exceptions=True,
+        )
+
+    results: list[FlightResult] = []
+    for origin, batch in zip(search["origins"], batches):
+        if isinstance(batch, BaseException):
+            log.warning("  PW origin %s failed entirely: %s", origin, batch)
+            continue
+        results.extend(batch)
+    return results
 
 
 def fetch(search: dict, timeout_sec: int = 60) -> list[FlightResult]:
