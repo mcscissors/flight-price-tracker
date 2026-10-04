@@ -13,7 +13,6 @@
     { "iata": "CE", "name": "Chalair Aviation",      "skyteam": false, "xp": false, "max_miles_pct": 100, "rating": "⭐" },
     { "iata": "CI", "name": "China Airlines",        "skyteam": true,  "xp": true,  "max_miles_pct": 130, "rating": "⭐" },
     { "iata": "MU", "name": "China Eastern",         "skyteam": true,  "xp": true,  "max_miles_pct": 150, "rating": "⭐⭐" },
-    { "iata": "CZ", "name": "China Southern",        "skyteam": false, "xp": false, "max_miles_pct": 0,   "rating": "–" },
     { "iata": "CM", "name": "Copa Airlines",         "skyteam": false, "xp": false, "max_miles_pct": 150, "rating": "⭐⭐" },
     { "iata": "DL", "name": "Delta",                 "skyteam": true,  "xp": true,  "max_miles_pct": 300, "rating": "⭐⭐⭐" },
     { "iata": "LY", "name": "EL AL",                 "skyteam": false, "xp": false, "max_miles_pct": 150, "rating": "⭐⭐" },

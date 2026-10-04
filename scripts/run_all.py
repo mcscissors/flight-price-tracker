@@ -17,7 +17,7 @@ from pathlib import Path
 from dotenv import load_dotenv
 
 from .models import FlightResult
-from . import fetch_amadeus, fetch_playwright, consolidate as consolidate_mod, prepare_email, send_email
+from . import fetch_amadeus, fetch_playwright, consolidate as consolidate_mod, prepare_email, prepare_email_v2, send_email, dedup
 
 BASE = Path(__file__).resolve().parent.parent
 load_dotenv(BASE / ".env")
@@ -159,15 +159,18 @@ def main(args=None) -> None:
         _save_results(all_consolidated, results_dir)
 
     if not per_search_email:
-        total = sum(len(v) for v in all_consolidated.values())
-        alerts = sum(1 for v in all_consolidated.values() for r in v if r.alert)
-        log.info(f"All searches done: {total} results, {alerts} alert(s)")
+        # Deduplicate across all searches, group by destination
+        deduped = dedup.deduplicate(all_consolidated)
+
+        total = sum(len(v) for v in deduped.values())
+        alerts = sum(1 for v in deduped.values() for r in v if r.alert)
+        log.info(f"All searches done: {total} results, {alerts} alert(s) (after dedup)")
 
         if only_alerts and alerts == 0:
             log.info("No alerts and send_email_only_if_alerts=true — email skipped.")
             return
 
-        subject, html = prepare_email.build(all_consolidated, searches)
+        subject, html = prepare_email_v2.build_by_destination(deduped)
         log.info(f"Subject: {subject}")
 
         if opts.dry_run:
