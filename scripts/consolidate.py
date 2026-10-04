@@ -4,7 +4,7 @@ Supports both simple threshold alerts and smarter percentage-based alerts.
 """
 from __future__ import annotations
 from .models import FlightResult
-from . import smart_alerts
+from . import smart_alerts, result_filters
 
 
 def consolidate(results: list[FlightResult], search: dict) -> list[FlightResult]:
@@ -52,6 +52,18 @@ def consolidate(results: list[FlightResult], search: dict) -> list[FlightResult]
 
     # Only keep flights operated by a Flying Blue partner airline.
     unique = [r for r in unique if r.fb_partner() is not None]
+
+    # Apply result filters (stops, duration, FB score) from search config.
+    max_stops = search.get("max_stops", 2)
+    max_flight_hours = search.get("max_flight_hours", 18)
+    min_fb_score = search.get("min_fb_score", -1)
+    if any([max_stops is not None, max_flight_hours is not None, min_fb_score is not None]):
+        unique = result_filters.filter_results(
+            unique,
+            max_stops=max_stops if max_stops is not None else 2,
+            max_flight_hours=max_flight_hours if max_flight_hours is not None else 18,
+            min_fb_score=min_fb_score if min_fb_score is not None else -1,
+        )
 
     # Mark alerts: simple threshold or smart percentage-based.
     use_smart_alerts = search.get("smart_alerts", False)

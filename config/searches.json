@@ -51,6 +51,8 @@
 	"AF"
       ],
       "max_stops": 1,
+      "max_flight_hours": 18,
+      "smart_alerts": false,
       "alert_below_eur": 2250,
       "max_results_per_date": 3,
       "sample_departure_dates": 7
@@ -104,6 +106,8 @@
         "VS"
       ],
       "max_stops": 1,
+      "max_flight_hours": 18,
+      "smart_alerts": false,
       "alert_below_eur": 2250,
       "max_results_per_date": 3,
       "sample_departure_dates": 7
@@ -156,6 +160,8 @@
         "AF"
       ],
       "max_stops": 2,
+      "max_flight_hours": 20,
+      "smart_alerts": false,
       "alert_below_eur": 2250,
       "max_results_per_date": 3,
       "sample_departure_dates": 7
@@ -225,6 +231,8 @@
         "AR"
       ],
       "max_stops": 2,
+      "max_flight_hours": 20,
+      "smart_alerts": false,
       "alert_below_eur": 1000,
       "max_results_per_date": 10,
       "sample_departure_dates": 7
@@ -295,6 +303,8 @@
       },
       "preferred_airlines": [],
       "max_stops": 2,
+      "max_flight_hours": 20,
+      "smart_alerts": false,
       "alert_below_eur": 525,
       "max_results_per_date": 5,
       "sample_departure_dates": 10
