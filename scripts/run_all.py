@@ -17,7 +17,7 @@ from pathlib import Path
 from dotenv import load_dotenv
 
 from .models import FlightResult
-from . import fetch_amadeus, fetch_playwright, consolidate as consolidate_mod, prepare_email, prepare_email_v2, send_email, dedup
+from . import fetch_amadeus, fetch_playwright, consolidate as consolidate_mod, prepare_email, prepare_email_v2, send_email, dedup, config_auto_dates
 
 BASE = Path(__file__).resolve().parent.parent
 load_dotenv(BASE / ".env")
@@ -88,6 +88,7 @@ def main(args=None) -> None:
     opts = p.parse_args(args)
 
     searches_cfg = _load_json(BASE / "config" / "searches.json")
+    searches_cfg = config_auto_dates.apply_auto_dates(searches_cfg)
     settings     = _load_json(BASE / "config" / "settings.json")
     searches     = [s for s in searches_cfg["searches"] if s.get("enabled", True)]
 

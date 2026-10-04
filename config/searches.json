@@ -25,13 +25,13 @@
         "PNH"
       ],
       "cabin": "BUSINESS",
-      "outbound_window": {
-        "from": "2026-10-04",
-        "to": "2026-12-15"
+      "outbound_window_config": {
+        "days_from_today": 0,
+        "days_duration": 72
       },
-      "inbound_window": {
-        "from": "2026-10-04",
-        "to": "2027-01-05"
+      "inbound_window_config": {
+        "days_from_today": 0,
+        "days_duration": 93
       },
       "trip_duration_days": {
         "min": 12,
@@ -83,13 +83,13 @@
         "BZE"
       ],
       "cabin": "BUSINESS",
-      "outbound_window": {
-        "from": "2026-10-04",
-        "to": "2026-12-15"
+      "outbound_window_config": {
+        "days_from_today": 0,
+        "days_duration": 72
       },
-      "inbound_window": {
-        "from": "2026-10-04",
-        "to": "2027-01-05"
+      "inbound_window_config": {
+        "days_from_today": 0,
+        "days_duration": 93
       },
       "trip_duration_days": {
         "min": 12,
@@ -133,13 +133,13 @@
         "TNR"
       ],
       "cabin": "BUSINESS",
-      "outbound_window": {
-        "from": "2026-10-04",
-        "to": "2026-12-15"
+      "outbound_window_config": {
+        "days_from_today": 0,
+        "days_duration": 72
       },
-      "inbound_window": {
-        "from": "2026-10-04",
-        "to": "2027-01-05"
+      "inbound_window_config": {
+        "days_from_today": 0,
+        "days_duration": 93
       },
       "trip_duration_days": {
         "min": 12,
@@ -201,13 +201,13 @@
         "SCL"
       ],
       "cabin": "PREMIUM_ECONOMY",
-      "outbound_window": {
-        "from": "2026-10-04",
-        "to": "2026-12-15"
+      "outbound_window_config": {
+        "days_from_today": 0,
+        "days_duration": 72
       },
-      "inbound_window": {
-        "from": "2026-10-04",
-        "to": "2027-01-05"
+      "inbound_window_config": {
+        "days_from_today": 0,
+        "days_duration": 93
       },
       "trip_duration_days": {
         "min": 12,
@@ -242,13 +242,13 @@
         "HAV"
       ],
       "cabin": "BUSINESS",
-      "outbound_window": {
-        "from": "2026-10-04",
-        "to": "2026-12-15"
+      "outbound_window_config": {
+        "days_from_today": 0,
+        "days_duration": 72
       },
-      "inbound_window": {
-        "from": "2026-10-04",
-        "to": "2027-01-05"
+      "inbound_window_config": {
+        "days_from_today": 0,
+        "days_duration": 93
       },
       "trip_duration_days": {
         "min": 12,
@@ -281,13 +281,13 @@
         "HOG"
       ],
       "cabin": "ECONOMY",
-      "outbound_window": {
-        "from": "2026-12-01",
-        "to": "2027-01-31"
+      "outbound_window_config": {
+        "days_from_today": 58,
+        "days_duration": 61
       },
-      "inbound_window": {
-        "from": "2026-12-02",
-        "to": "2026-12-02"
+      "inbound_window_config": {
+        "days_from_today": 59,
+        "days_duration": 0
       },
       "trip_duration_days": {
         "min": 1,
