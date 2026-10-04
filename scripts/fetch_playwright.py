@@ -415,34 +415,51 @@ async def _fetch_destination_date(
 
 async def _fetch_origin(pw, search: dict, origin: str, params: _FetchParams) -> list[FlightResult]:
     """
-    Fetch all destinations/dates for one origin. Uses its own browser
-    instance, guaranteed closed (via try/finally) whether this returns
-    normally, raises, or is cancelled by a sibling task's failure.
+    Fetch all destinations/dates for one origin. Restarts browser every 5 destination/date
+    pairs to prevent memory bloat (Playwright Chromium accumulates ~30MB per page.goto).
     """
-    browser = await pw.chromium.launch(headless=True)
+    results: list[FlightResult] = []
+    pair_count = 0
+    browser = None
+    ctx = None
+    page = None
+
     try:
-        ctx = await browser.new_context(
-            locale="en-US",
-            extra_http_headers={"Accept-Language": "en-US,en;q=0.9"},
-        )
-        try:
-            page = await ctx.new_page()
-            results: list[FlightResult] = []
+        for dest in search["destinations"]:
+            for dep in params.dep_dates:
+                ret = dep + timedelta(days=params.mid_days)
+                if params.in_from and params.in_to and not (params.in_from <= ret <= params.in_to):
+                    continue
 
-            for dest in search["destinations"]:
-                for dep in params.dep_dates:
-                    ret = dep + timedelta(days=params.mid_days)
-                    if params.in_from and params.in_to and not (params.in_from <= ret <= params.in_to):
-                        continue
-                    results.extend(
-                        await _fetch_destination_date(page, search, origin, dest, dep, ret, params)
+                # Restart browser every 5 pairs to avoid memory bloat
+                if pair_count % 5 == 0:
+                    if page:
+                        await page.close()
+                    if ctx:
+                        await ctx.close()
+                    if browser:
+                        await browser.close()
+
+                    browser = await pw.chromium.launch(headless=True)
+                    ctx = await browser.new_context(
+                        locale="en-US",
+                        extra_http_headers={"Accept-Language": "en-US,en;q=0.9"},
                     )
+                    page = await ctx.new_page()
 
-            return results
-        finally:
-            await ctx.close()
+                pair_count += 1
+                results.extend(
+                    await _fetch_destination_date(page, search, origin, dest, dep, ret, params)
+                )
+
+        return results
     finally:
-        await browser.close()
+        if page:
+            await page.close()
+        if ctx:
+            await ctx.close()
+        if browser:
+            await browser.close()
 
 
 async def _fetch_all(search: dict, timeout_sec: int) -> list[FlightResult]:
