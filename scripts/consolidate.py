@@ -1,8 +1,10 @@
 """
 Merge results from all sources, deduplicate, rank by price, flag alerts.
+Supports both simple threshold alerts and smarter percentage-based alerts.
 """
 from __future__ import annotations
 from .models import FlightResult
+from . import smart_alerts
 
 
 def consolidate(results: list[FlightResult], search: dict) -> list[FlightResult]:
@@ -51,9 +53,27 @@ def consolidate(results: list[FlightResult], search: dict) -> list[FlightResult]
     # Only keep flights operated by a Flying Blue partner airline.
     unique = [r for r in unique if r.fb_partner() is not None]
 
-    for r in unique:
-        if threshold is not None and r.total_price_eur < threshold:
-            r.alert = True
+    # Mark alerts: simple threshold or smart percentage-based.
+    use_smart_alerts = search.get("smart_alerts", False)
+    if unique and threshold is not None:
+        # Gather recent prices for percentage baseline (if using smart alerts).
+        all_prices = [r.total_price_eur for r in unique]
+
+        for r in unique:
+            # Suppress repeated alerts for same route within 24h.
+            route_key = smart_alerts.make_route_key(r.origin, r.destination, r.departure_date, r.cabin)
+            if smart_alerts.should_suppress_repeat_alert(route_key):
+                continue
+
+            # Check alert condition: threshold or percentage-based.
+            if use_smart_alerts:
+                should_alert = smart_alerts.should_alert_percentage(r.total_price_eur, all_prices)
+            else:
+                should_alert = smart_alerts.should_alert_threshold(r.total_price_eur, threshold)
+
+            if should_alert:
+                r.alert = True
+                smart_alerts.record_alert(route_key)
 
     # Only return results that meet the threshold (all results if no threshold set).
     if threshold is not None:
