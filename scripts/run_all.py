@@ -154,7 +154,10 @@ def main(args=None) -> None:
                 preview.write_text(html, encoding="utf-8")
                 log.info(f"  Dry run → {preview}")
             else:
-                send_email.send(subject, html, settings)
+                try:
+                    send_email.send(subject, html, settings)
+                except Exception as e:
+                    log.error(f"  ❌ EMAIL SEND FAILED: {e}")
 
     if cache:
         _save_results(all_consolidated, results_dir)
@@ -180,7 +183,10 @@ def main(args=None) -> None:
             preview_path.write_text(html, encoding="utf-8")
             log.info(f"Dry run — email preview saved to {preview_path}")
         else:
-            send_email.send(subject, html, settings)
+            try:
+                send_email.send(subject, html, settings)
+            except Exception as e:
+                log.error(f"❌ EMAIL SEND FAILED: {e}")
 
 
 if __name__ == "__main__":
